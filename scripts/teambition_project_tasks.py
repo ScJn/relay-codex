@@ -291,7 +291,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fetch unfinished Teambition project tasks.")
     parser.add_argument("--project-id", default="", help="Project id. Defaults to TEAMBITION_PROJECT_ID.")
     parser.add_argument("--list-lists", action="store_true", help="List project board lists and exit.")
-    parser.add_argument("--list", action="append", default=[], help="Required board list name, e.g. todo/doing/now/long.")
+    parser.add_argument("--list", action="append", default=[], help="Required board list name. Use --list-lists to discover names.")
     parser.add_argument("--list-id", action="append", default=[], help="Required board list id. Can be used multiple times.")
     parser.add_argument("--min-priority", type=int, default=None)
     parser.add_argument("--include-archived", action="store_true")

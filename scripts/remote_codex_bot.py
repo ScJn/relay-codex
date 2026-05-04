@@ -881,23 +881,24 @@ class TelegramCodexBot:
         return max(0.0, 100.0 - float(used_percent))
 
     def _build_idle_work_request(self, remaining_percent: float) -> str:
+        board_list_name = os.getenv("TEAMBITION_IDLE_BOARD_LIST", "doing").strip() or "doing"
         try:
-            tasks = self._fetch_teambition_board_tasks("doing")
+            tasks = self._fetch_teambition_board_tasks(board_list_name)
         except Exception as exc:
             return (
                 "我现在很闲，老板给我派活吧\n\n"
                 f"5小时额度剩余 {remaining_percent:.1f}%。\n"
-                f"读取 doing 任务失败：{exc!r}"
+                f"读取 {board_list_name} 任务失败：{exc!r}"
             )
 
         lines = [
             "我现在很闲，老板给我派活吧",
             "",
             f"5小时额度剩余 {remaining_percent:.1f}%。",
-            f"doing 未完成任务共 {len(tasks)} 条：",
+            f"{board_list_name} 未完成任务共 {len(tasks)} 条：",
         ]
         if not tasks:
-            lines.append("暂无 doing 任务。")
+            lines.append(f"暂无 {board_list_name} 任务。")
             return "\n".join(lines)
 
         for index, task in enumerate(tasks, start=1):
