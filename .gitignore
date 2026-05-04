@@ -1,0 +1,10 @@
+.env
+.git_backup_*/
+.idea/
+.remote_codex_bot_state.json
+.remote_codex_bot.lock
+__pycache__/
+*.pyc
+logs/
+teambition_tasks.md
+teambition_tasks_test.json
