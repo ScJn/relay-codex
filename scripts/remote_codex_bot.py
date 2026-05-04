@@ -279,7 +279,7 @@ class TelegramCodexBot:
             chat_id,
             f"已加入任务 {task_id} 的引导队列。\n"
             f"排队引导数：{guidance_count}\n"
-            "当前 Codex turn 结束后会自动继续处理。",
+            "会尽快注入当前 Codex turn；如果注入失败，会在 turn 结束后自动继续处理。",
         )
 
     def _maybe_start_task(self, chat_id: int, text: str, goal_objective: str | None = None) -> None:
@@ -365,7 +365,7 @@ class TelegramCodexBot:
                 chat_id,
                 f"已加入任务 {task_id} 的引导队列。\n"
                 f"排队引导数：{guidance_count}\n"
-                "普通消息会优先补充到运行中的任务；任务结束后会按最近会话继续。",
+                "普通消息会优先实时补充到运行中的任务；如果注入失败，任务结束后会按最近会话继续。",
             )
             return True
         if task_ids:
@@ -397,6 +397,23 @@ class TelegramCodexBot:
         if running.guidance is None:
             running.guidance = []
         running.guidance.append(text.strip())
+        return len(running.guidance)
+
+    def _drain_guidance_locked(self, task_id: str) -> list[str]:
+        running = self.running_tasks.get(task_id)
+        if running is None or not running.guidance:
+            return []
+        guidance = list(running.guidance)
+        running.guidance.clear()
+        return guidance
+
+    def _prepend_guidance_locked(self, task_id: str, guidance: list[str]) -> int | None:
+        running = self.running_tasks.get(task_id)
+        if running is None:
+            return None
+        if running.guidance is None:
+            running.guidance = []
+        running.guidance[:0] = [item.strip() for item in guidance if item.strip()]
         return len(running.guidance)
 
     def _parse_project_command(self, text: str) -> tuple[str, str] | None:
@@ -610,9 +627,7 @@ class TelegramCodexBot:
                 await result
 
     async def _rpc(self, ws: Any, method: str, params: Any) -> Any:
-        request_id = uuid.uuid4().hex
-        payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
-        await ws.send(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        request_id = await self._send_rpc_request(ws, method, params)
         while True:
             message = json.loads(await ws.recv())
             if message.get("id") != request_id:
@@ -621,6 +636,12 @@ class TelegramCodexBot:
                 error = message.get("error") or {}
                 raise RuntimeError(error.get("message") if isinstance(error, dict) else str(error))
             return message.get("result")
+
+    async def _send_rpc_request(self, ws: Any, method: str, params: Any) -> str:
+        request_id = uuid.uuid4().hex
+        payload = {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+        await ws.send(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        return request_id
 
     async def _open_codex_thread(self, ws: Any, task: Task) -> str:
         params: dict[str, Any] = {
@@ -651,14 +672,48 @@ class TelegramCodexBot:
         thread_id: str,
         turn_id: str | None,
     ) -> None:
+        pending_steers: dict[str, list[str]] = {}
         while True:
             with self.lock:
                 running = self.running_tasks.get(task.task_id)
                 if running and running.cancelled:
-                    await self._rpc(ws, "turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
+                    await self._send_rpc_request(ws, "turn/interrupt", {"threadId": thread_id, "turnId": turn_id})
                     return
+                guidance_to_steer = self._drain_guidance_locked(task.task_id)
 
-            message = json.loads(await ws.recv())
+            if guidance_to_steer and turn_id:
+                request_id = await self._send_rpc_request(ws, "turn/steer", {
+                    "threadId": thread_id,
+                    "expectedTurnId": turn_id,
+                    "input": [{"type": "text", "text": self._format_guidance_prompt(guidance_to_steer), "text_elements": []}],
+                })
+                pending_steers[request_id] = guidance_to_steer
+                self._send_message(task.chat_id, f"已实时发送引导：{len(guidance_to_steer)} 条")
+            elif guidance_to_steer:
+                with self.lock:
+                    self._prepend_guidance_locked(task.task_id, guidance_to_steer)
+
+            try:
+                message = json.loads(await asyncio.wait_for(ws.recv(), timeout=0.5))
+            except asyncio.TimeoutError:
+                continue
+
+            response_id = message.get("id")
+            if response_id in pending_steers:
+                steered_guidance = pending_steers.pop(response_id)
+                if "error" in message:
+                    error = message.get("error") or {}
+                    error_text = error.get("message") if isinstance(error, dict) else str(error)
+                    with self.lock:
+                        self._prepend_guidance_locked(task.task_id, steered_guidance)
+                    self._send_message(
+                        task.chat_id,
+                        f"实时引导注入失败，已保留到当前 turn 结束后继续处理：{error_text}",
+                    )
+                continue
+            if response_id is not None:
+                continue
+
             method = message.get("method")
             params = message.get("params") if isinstance(message.get("params"), dict) else {}
             if params.get("threadId") != thread_id:
@@ -675,6 +730,10 @@ class TelegramCodexBot:
                 if isinstance(item, dict) and item.get("type") == "commandExecution":
                     self._handle_command_started(task, progress)
             elif method == "turn/completed":
+                if pending_steers:
+                    with self.lock:
+                        for steered_guidance in pending_steers.values():
+                            self._prepend_guidance_locked(task.task_id, steered_guidance)
                 turn = params.get("turn") if isinstance(params, dict) else {}
                 status = turn.get("status") if isinstance(turn, dict) else None
                 if isinstance(status, dict) and status.get("type") == "failed":

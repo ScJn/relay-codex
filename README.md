@@ -122,7 +122,7 @@ Logs are written under `logs/` and ignored by git.
 - `/status` - show current running and pending tasks.
 - `/new_chat` - reset the next task to a new Codex thread.
 - `/cancel` or `/cancel <task_id>` - cancel running work.
-- `/guide <task_id> <message>` - queue follow-up guidance for a running task.
+- `/guide <task_id> <message>` - steer a running Codex turn with live guidance; if live steering fails, it is queued as follow-up guidance.
 - `/goal <objective>` - start or continue work with a Codex goal.
 
 After selecting a project, send any normal message to start a Codex task in that project.

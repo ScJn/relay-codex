@@ -122,7 +122,7 @@ python -u scripts\remote_codex_bot.py
 - `/status` - 查看当前运行中和排队任务。
 - `/new_chat` - 下一次任务使用新的 Codex thread。
 - `/cancel` 或 `/cancel <task_id>` - 取消运行中的任务。
-- `/guide <task_id> <message>` - 给运行中的任务追加后续引导。
+- `/guide <task_id> <message>` - 给运行中的 Codex turn 实时注入引导；如果实时注入失败，则排队为后续引导。
 - `/goal <objective>` - 用 Codex goal 模式启动或继续任务。
 
 选择项目后，发送普通消息就会在该项目里启动一次 Codex 任务。
